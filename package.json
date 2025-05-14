@@ -1,9 +1,21 @@
 {
   "name": "bock-mock",
-  "packageManager": "yarn@3.6.3",
+  "version": "1.0.0",
+  "description": "Pino wrapped to match the bock API",
   "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "main": "./index.js",
+  "files": [
+    "index.js",
+    "bock-transport.js"
+  ],
+  "author": "Andrew Carpenter",
+  "license": "MIT",
   "scripts": {
-    "test": "mvt --verbose"
+    "test": "mvt --verbose",
+    "lint": "standard"
   },
   "devDependencies": {
     "mvt": "^5.0.0-beta.1",
@@ -11,7 +23,7 @@
   },
   "dependencies": {
     "hoy": "^3.0.0",
-    "pino": "^9.6.0",
-    "pino-pretty": "^13.0.0"
-  }
+    "pino": "^9.6.0"
+  },
+  "packageManager": "yarn@3.6.3"
 }
