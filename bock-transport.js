@@ -6,6 +6,8 @@ import path from 'path'
 
 const errProps = [
   'name',
+  'type',
+  'code',
   'message',
   'fileName',
   'lineNumber',
@@ -94,10 +96,12 @@ export default async (opts) => {
       for await (const log of source) {
         if (!log) continue
 
-        if (log.err?.constructor === Object) {
+        if (log.error?.constructor === Object) {
           errProps.forEach((p) => {
-            if (p in log.err && !log[p]) log[p] = log.err[p]
+            if (p in log.error && !log[p]) log[p] = log.error[p]
           })
+
+          delete log.error
         }
 
         const { name, message, level } = log

@@ -1,4 +1,5 @@
 import pino from 'pino'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
@@ -30,7 +31,9 @@ const bock = (id, opts = {}) => {
     toConsole = true,
     toFile = true,
     whitelist = [],
-    track = false
+    track = false,
+    includePid = false,
+    includeHost = false
   } = opts
 
   const transport = pino.transport({
@@ -42,26 +45,42 @@ const bock = (id, opts = {}) => {
       toConsole,
       toFile,
       whitelist,
-      track
+      track,
+      includePid,
+      includeHost
     }
   })
+
+  const base = {}
+
+  if (includePid) base.pid = process.pid
+  if (includeHost) base.hostname = os.hostname()
 
   const logger = pino(
     {
       level,
       name: appName,
       sync: false,
-      formatters: { level: (label) => { return { level: label } } }
+      base,
+      errorKey: 'error',
+      messageKey: 'message',
+      formatters: { level: (label) => ({ level: label }) }
     },
     transport
   )
 
   const shimTransform = (errorIn, transform = opts.transform) => {
-    if (!errorIn || typeof transform !== 'function') return errorIn
+    const isFunction = typeof errorIn === 'function'
+    const hasTransform = typeof transform === 'function'
+
+    if (!errorIn || !(isFunction || hasTransform)) return errorIn
 
     const errFromFunc = typeof errorIn === 'function' && errorIn()
     const errFromStr = typeof errorIn === 'string' && { message: 'err' }
     const error = errFromFunc || errFromStr || errorIn
+
+    if (!hasTransform) return error
+
     const replaced = Object.getOwnPropertyNames(error).reduce((out, p) => {
       const val = error[p] || ''
       const primitive = PRIMITIVES[val]

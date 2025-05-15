@@ -8,8 +8,36 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const assets = path.resolve(__dirname, '_assets')
 const childPath = path.join(assets, 'child.js')
+const seenLogs = {}
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const clearAll = (loggers) => {
+  if (loggers) {
+    if (Array.isArray(loggers)) {
+      loggers.forEach((logger) => logger.close())
+    } else {
+      loggers.close()
+    }
+  }
+
+  const logBase = getOpts().logBase
+  try {
+    const logFiles = fs.readdirSync(logBase).map((f) => path.join(logBase, f))
+
+    logFiles.forEach((f) => {
+      if (f.endsWith('.gitkeep')) return
+
+      try {
+        fs.unlinkSync(f)
+      } catch (ex) {
+        console.error(ex)
+      }
+    })
+  } catch (ex) {
+    console.error(ex)
+  }
+}
 
 const getOpts = (override = {}) => Object.assign({}, {
   appName: 'bocktest',
@@ -45,31 +73,28 @@ const fileResultJson = (logFile) => {
   return JSON.parse(`[${nld}]`)
 }
 
-const clearAll = (loggers) => {
-  if (loggers) {
-    if (Array.isArray(loggers)) {
-      loggers.forEach((logger) => logger.close())
-    } else {
-      loggers.close()
-    }
-  }
+const fileResult = async (opts, logThings) => {
+  opts = typeof opts === 'string' ? { appName: opts } : (opts || {})
 
-  const logBase = getOpts().logBase
-  try {
-    const logFiles = fs.readdirSync(logBase).map((f) => path.join(logBase, f))
+  const logOpts = getOpts(opts)
+  const logger = bock(logOpts)
+  const { appName, logBase } = logOpts
 
-    logFiles.forEach((f) => {
-      if (f.endsWith('.gitkeep')) return
+  if (seenLogs[appName]) throw new Error('Tests require unique appName')
 
-      try {
-        fs.unlinkSync(f)
-      } catch (ex) {
-        console.error(ex)
-      }
-    })
-  } catch (ex) {
-    console.error(ex)
-  }
+  seenLogs[appName] = true
+
+  await logThings(logger)
+  await delay(opts.delay || 100)
+
+  const logFile = fs.readdirSync(logBase).find((f) => f.includes(appName))
+  const log = fileResultJson(path.resolve(logBase, logFile))
+
+  clearAll(logger)
+
+  console.log(log)
+
+  return log
 }
 
 test.before(() => clearAll())
@@ -77,29 +102,21 @@ test.before(() => clearAll())
 test.after(() => clearAll())
 
 test('file written as line delimited JSON', async (assert) => {
-  const opts = getOpts({ appName: 'bock-test' })
-  const logger = bock(opts)
-
-  logger.debug(new Error('debug'))
-  logger.info(new Error('info'))
-  logger.warn(new Error('warn'))
-  logger.fatal(new Error('fatal'))
-
-  await delay(200)
-
-  const logFiles = fs.readdirSync(opts.logBase).filter((f) => f !== '.gitkeep')
-  const log = fileResultJson(path.resolve(opts.logBase, logFiles[0]))
+  const log = await fileResult('nld-json', (logger) => {
+    logger.debug(new Error('debug'))
+    logger.info(new Error('info'))
+    logger.warn(new Error('warn'))
+    logger.fatal(new Error('fatal'))
+  })
 
   assert.is(log[0].level, 'debug')
   assert.is(log[1].level, 'info')
   assert.is(log[2].level, 'warn')
   assert.is(log[3].level, 'fatal')
-
-  clearAll(logger)
 })
 
 test('circular reference', async (assert) => {
-  const opts = getOpts({ appName: 'circular' })
+  const opts = getOpts({ appName: 'circular', toFile: false, toConsole: false })
   const logger = bock(opts)
   const err = new Error('debug')
   const meta = { error: err }
@@ -107,8 +124,6 @@ test('circular reference', async (assert) => {
   err.meta = meta
 
   assert.notThrows(() => logger.debug(err))
-
-  clearAll(logger)
 })
 
 test('console output is as expected', async (assert) => {
@@ -128,56 +143,64 @@ test('console output is as expected', async (assert) => {
 })
 
 test('function as error', async (assert) => {
-  const opts = getOpts({ appName: 'function' })
-  const logger = bock(opts)
-
-  logger.fatal(() => new Error('fatal'))
-
-  await delay(200)
-
-  const logFile = path.resolve(opts.logBase, fs.readdirSync(opts.logBase)[0])
-  const log = fileResultJson(logFile)
+  const log = await fileResult('function', (logger) => {
+    logger.fatal(() => new Error('functioned'))
+  })
 
   assert.is(log[0].level, 'fatal')
-
-  clearAll(logger)
+  assert.is(log[0].message, 'functioned')
 })
 
 test('transform error text', async (assert) => {
-  const opts = getOpts({ appName: 'transform' })
-  const logger = bock(opts)
-
-  logger.fatal(new Error('fatal'), (t) => t.replace('ata', 'ootbal'))
-
-  await delay(200)
-
-  const logFile = path.resolve(opts.logBase, fs.readdirSync(opts.logBase)[0])
-  const log = fileResultJson(logFile)
+  const log = await fileResult('transform', (logger) => {
+    logger.fatal(new Error('fatal'), (t) => t.replace('ata', 'ootbal'))
+  })
 
   assert.is(log[0].message, 'football')
+})
 
-  clearAll(logger)
+test('includePid functions as expected', async (assert) => {
+  const exclude = await fileResult('includePid false or omitted', (logger) => {
+    logger.fatal('should not include pid')
+  })
+
+  assert.falsy(exclude[0].pid)
+
+  const includeOpts = { appName: 'includePid true', includePid: true }
+  const include = await fileResult(includeOpts, (logger) => {
+    logger.fatal('should include pid')
+  })
+
+  assert.truthy(include[0].pid)
+})
+
+test('includeHost functions as expected', async (assert) => {
+  const exclude = await fileResult('includeHost false or omitted', (logger) => {
+    logger.fatal('should not include hostname')
+  })
+
+  assert.falsy(exclude[0].hostname)
+
+  const includeOpts = { appName: 'includeHost true', includeHost: true }
+  const include = await fileResult(includeOpts, (logger) => {
+    logger.fatal('should include hostname')
+  })
+
+  assert.truthy(include[0].hostname)
 })
 
 test('whitelist', async (assert) => {
-  const opts = getOpts({ appName: 'whitelist', whitelist: ['info'] })
-  const logger = bock(opts)
-
-  logger.debug(new Error('debug'))
-  logger.info(new Error('info'))
-  logger.warn(new Error('warn'))
-  logger.fatal(new Error('fatal'))
-
-  await delay(200)
-
-  const logFile = path.resolve(opts.logBase, fs.readdirSync(opts.logBase)[0])
-  const log = fileResultJson(logFile)
+  const opts = { appName: 'whitelist', whitelist: ['info'] }
+  const log = await fileResult(opts, (logger) => {
+    logger.debug(new Error('debug'))
+    logger.info(new Error('info'))
+    logger.warn(new Error('warn'))
+    logger.fatal(new Error('fatal'))
+  })
 
   assert.is(log[0].level, 'debug')
   assert.is(log[1].level, 'warn')
   assert.is(log[2].level, 'fatal')
-
-  clearAll(logger)
 })
 
 test('cached returns last instance', async (assert) => {
@@ -206,26 +229,19 @@ test('cached re-inits if cached needs opts', async (assert) => {
 })
 
 test('can destructure', async (assert) => {
-  const opts = getOpts({ appName: 'destructure' })
-  const logger = bock(opts)
-  const { debug, info, warn, fatal } = logger
+  const log = await fileResult('destructure', (logger) => {
+    const { debug, info, warn, fatal } = logger
 
-  debug(new Error('debug'))
-  info(new Error('info'))
-  warn(new Error('warn'))
-  fatal(new Error('fatal'))
-
-  await delay(200)
-
-  const logFile = path.resolve(opts.logBase, fs.readdirSync(opts.logBase)[0])
-  const log = fileResultJson(logFile)
+    debug(new Error('debug'))
+    info(new Error('info'))
+    warn(new Error('warn'))
+    fatal(new Error('fatal'))
+  })
 
   assert.is(log[0].level, 'debug')
   assert.is(log[1].level, 'info')
   assert.is(log[2].level, 'warn')
   assert.is(log[3].level, 'fatal')
-
-  clearAll(logger)
 })
 
 test('stress test', async (assert) => {
