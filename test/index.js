@@ -92,8 +92,6 @@ const fileResult = async (opts, logThings) => {
 
   clearAll(logger)
 
-  console.log(log)
-
   return log
 }
 
